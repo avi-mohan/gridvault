@@ -1,0 +1,14 @@
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+.idea/
+
+.env
+
+# Testcontainers / Docker
+*.log
+
+# OS
+.DS_Store

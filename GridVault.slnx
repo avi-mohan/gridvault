@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GridVault.Api/GridVault.Api.csproj" />
+    <Project Path="src/GridVault.Data/GridVault.Data.csproj" />
+    <Project Path="src/GridVault.Domain/GridVault.Domain.csproj" />
+    <Project Path="src/GridVault.Ingestion/GridVault.Ingestion.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GridVault.IntegrationTests/GridVault.IntegrationTests.csproj" />
+    <Project Path="tests/GridVault.UnitTests/GridVault.UnitTests.csproj" />
+  </Folder>
+</Solution>
