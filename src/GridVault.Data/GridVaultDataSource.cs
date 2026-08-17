@@ -11,6 +11,8 @@ public static class GridVaultDataSource
     /// </summary>
     public static NpgsqlDataSource Create(string connectionString)
     {
+        NodaTimeDapperTypeHandlers.Register();
+
         var builder = new NpgsqlDataSourceBuilder(connectionString);
         builder.UseNodaTime();
         return builder.Build();

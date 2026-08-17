@@ -132,6 +132,26 @@ immediately (migration output, request logs) and costs nothing to configure
 early. Quartz and OpenTelemetry land with Milestone 2, when there's an
 actual job and an actual request path to instrument.
 
+## 2026-08-13 — Instant<->timestamptz mapping registered centrally, not per call site
+
+`Npgsql.NodaTime`'s `UseNodaTime()` (enabled once, in `GridVaultDataSource.Create`)
+covers the ADO.NET provider layer — a `timestamptz` column already comes back
+from the reader as a boxed `Instant`, so Dapper's column deserializer just
+casts it. Writing a parameter is a separate Dapper code path: Dapper resolves
+each parameter's `DbType` itself via a hardcoded switch over known CLR types
+before Npgsql ever sees the value, doesn't recognize `Instant`, and throws
+`NotSupportedException` rather than guess. `NodaTimeDapperTypeHandlers`
+registers a `SqlMapper.TypeHandler<Instant>` that does no conversion of its
+own — it sets `NpgsqlDbType.TimestampTz` and hands the `Instant` straight to
+Npgsql, so the plugin still does the actual marshalling. Registration lives
+inside `GridVaultDataSource.Create` specifically so there is exactly one
+place that can drift out of sync between the app and the tests: every host
+(API, Ingestion, integration tests) already calls that factory to get a data
+source, so there's no separate step to remember. A round-trip test
+(`NodaTimeTypeMappingTests`) writes an `Instant` through a real `timestamptz`
+column and asserts it comes back identical, so a regression here fails on
+that specific assertion rather than as an opaque query error somewhere else.
+
 ## 2026-08-13 — pinned SSH.NET to 2026.0.0 in GridVault.IntegrationTests
 
 `Testcontainers.PostgreSql` 4.13.0 (latest) transitively pulls `SSH.NET`
