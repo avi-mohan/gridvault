@@ -162,3 +162,42 @@ warning (NU1903) rather than letting it slide. Added a direct
 `PackageReference` to `SSH.NET` 2026.0.0, which NuGet's nearest-wins
 resolution picks over the transitive version. This should be revisited (the
 pin removed) once Testcontainers bumps its own dependency.
+
+## 2026-08-20 — demand report is fixed EST (UTC-5), not Eastern Prevailing Time
+
+Confirmed empirically that the hourly demand report's hour-ending data is
+fixed EST year-round, not `America/Toronto` with DST, despite the original
+assumption in early drafts of `CLAUDE.md`. Evidence: every archived DST
+transition date checked (2018-03-11, 2018-11-04, 2020-03-08, 2020-11-01,
+2021-03-14, 2021-11-07, and 2026-03-08 as originally flagged) has exactly 24
+rows in the file — a true EPT hour-ending series would show 23 rows on
+spring-forward and 25 on fall-back, never 24 on both. IESO's own report
+documentation labels hours in this report as EST. Independently corroborated
+via the file's HTTP `Last-Modified` header (RFC-mandated GMT) against the
+report's internal `Created at` timestamp across three consecutive days in
+August 2026 (mid-DST, when EPT and EST diverge by an hour): the offset was
+consistently ~5h01m (Aug 18/19/20), matching UTC-5 exactly rather than the
+UTC-4 that EPT would show during DST. `series.source_timezone` for the
+demand series is `Etc/GMT+5` (fixed offset), not `America/Toronto`. This
+also confirms timezone is genuinely a per-series property, not a
+project-wide constant: the post-Market-Renewal Program Day-Ahead Market
+report is expected to operate in true Eastern Prevailing Time, so a global
+assumption would have been wrong for at least one report we already know
+about.
+
+## 2026-08-20 — Created-at header's zone is a fact separate from the data rows' zone
+
+The demand report's `Created at` header becomes `transaction_time` under the
+source-publish-timestamp precedence rule (see `CLAUDE.md`), and it's a naked
+local timestamp with no zone marker of its own. It is not automatically the
+same field as the zone the `Date`/`Hour` data rows are published in, even
+though for this report both happen to resolve to UTC-5 today — one is a
+report-generation timestamp, the other is a market-data convention, and
+nothing guarantees a future report keeps them equal. We chose not to add a
+schema column for the header's zone: `series.source_timezone` is documented
+as covering only the data rows' (valid_time) zone, and the demand loader
+hardcodes UTC-5 for the header specifically, established by the same
+`Last-Modified` evidence above. What we gave up is generality — if a future
+report's header zone turns out to differ from its data zone, this will need
+a real column rather than a per-source constant. We're accepting that now
+rather than generalizing for a case we don't have evidence of yet.

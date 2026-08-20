@@ -43,7 +43,7 @@ tests/
 Ingestion is strictly: fetch raw -> write immutable raw payload to object
 storage -> parse -> upsert into Postgres. The raw landing step is
 non-negotiable; it's what makes replay possible without re-hitting the
-source. (Milestone 2 — not implemented yet.)
+source.
 
 ## Local setup
 
@@ -77,7 +77,7 @@ Docker.
 
 ## Status
 
-Milestone 1 (data model, bitemporal schema, local dev environment) is in
-progress. Ingestion jobs, the as-of read API surface, and
-Terraform/GitHub Actions land in later milestones — see `docs/decisions.md`
-for what's been decided so far and why.
+GridVault targets one working v1, not a milestone roadmap. Scope: scheduled
+ingestion of the IESO hourly demand report, an as-of read endpoint, and CI.
+Explicitly not in scope: price data, replay, backfill, and Terraform — see
+`docs/decisions.md` for what's been decided so far and why.

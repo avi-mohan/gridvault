@@ -27,7 +27,7 @@ store (valid_time, transaction_time) pairs and never mutate history.
   API
 - xUnit + Testcontainers for integration tests, WireMock.NET for upstream
   stubs
-- Terraform + GitHub Actions later — **do not scaffold these yet**
+- GitHub Actions for CI. Terraform stays out of scope.
 
 ## Architecture
 
@@ -50,10 +50,15 @@ source.
 ## Rules I care about
 
 - Every timestamp stored is UTC, typed `timestamptz`. Never `timestamp`.
-- IESO publishes in Eastern Prevailing Time with hour-ending convention and
-  has real DST transitions (a 23-hour and a 25-hour day each year).
-  Conversion happens once, at the parse boundary, in one clearly-named place.
-  Write tests for both transition days before writing the converter.
+- The hourly demand report is fixed EST (UTC-5) year-round, hour-ending, with
+  **no DST transitions** — every archived DST transition date has exactly 24
+  rows, never 23 or 25. Do not assume Eastern Prevailing Time for this
+  report. Timezone is a per-series property (`series.source_timezone`), not
+  a global assumption, because it is not uniform across IESO reports: the
+  post-Market-Renewal Program Day-Ahead Market does operate in Eastern
+  Prevailing Time. Conversion happens once, at the parse boundary, in one
+  clearly-named place per zone. See `docs/decisions.md` for how the demand
+  report's zone was established.
 - `transaction_time` on an observation row is deterministic, never
   wall-clock-at-insert (`DateTime.UtcNow`/`SystemClock.GetCurrentInstant()`
   at write time). Precedence: use the source's own publish timestamp when
@@ -76,8 +81,6 @@ source.
 ## How to work on this repo
 
 - Small commits, conventional commit messages.
-- Before any milestone, write a short plan and wait for approval before
-  implementing.
 - Prefer boring, obvious code.
 - When you make a design tradeoff, add a one-paragraph note to
   `docs/decisions.md` explaining what you chose and what you gave up.
