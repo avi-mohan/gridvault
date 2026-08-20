@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\GridVault.Domain\GridVault.Domain.csproj" />
+    <ProjectReference Include="..\..\src\GridVault.Ingestion\GridVault.Ingestion.csproj" />
   </ItemGroup>
 
 </Project>
