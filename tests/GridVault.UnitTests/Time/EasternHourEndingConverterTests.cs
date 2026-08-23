@@ -69,6 +69,45 @@ public class EasternHourEndingConverterTests
         }
     }
 
+    [Fact]
+    public void ToUtcInterval_FixedOffsetZone_OnEasternFallBackDate_Has24DistinctConsecutiveHours()
+    {
+        var fixedOffsetZone = DateTimeZoneProviders.Tzdb["Etc/GMT+5"];
+        var date = new LocalDate(2026, 11, 1);
+
+        // Confirm this really is the date Eastern falls back on — the whole
+        // point of this test is that the fixed-offset zone does NOT follow
+        // Eastern's DST calendar, so the date needs to actually be one
+        // where they'd disagree.
+        Assert.Equal(FindTransitionDate(2026, 11), date);
+        Assert.Equal(25, CountHourEndingSlots(EasternZone, date));
+
+        var intervals = Enumerable.Range(1, 24)
+            .Select(hourEnding => EasternHourEndingConverter.ToUtcInterval(fixedOffsetZone, date, hourEnding))
+            .ToList();
+
+        Assert.Equal(24, intervals.Select(interval => interval.Start).Distinct().Count());
+
+        for (var i = 0; i < intervals.Count; i++)
+        {
+            Assert.Equal(Duration.FromHours(1), intervals[i].Duration);
+            if (i > 0)
+            {
+                Assert.Equal(intervals[i - 1].End, intervals[i].Start);
+            }
+        }
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => EasternHourEndingConverter.ToUtcInterval(fixedOffsetZone, date, 25));
+    }
+
+    private static int CountHourEndingSlots(DateTimeZone zone, LocalDate date)
+    {
+        var startOfDay = zone.AtStartOfDay(date).ToInstant();
+        var startOfNextDay = zone.AtStartOfDay(date.PlusDays(1)).ToInstant();
+        return (int)(startOfNextDay - startOfDay).TotalHours;
+    }
+
     /// <summary>
     /// Finds the DST transition date in the given month by scanning for the
     /// day whose local-midnight-to-local-midnight span isn't 24 hours,
