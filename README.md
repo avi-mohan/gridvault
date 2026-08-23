@@ -62,7 +62,7 @@ migrations from `src/GridVault.Data/Migrations` on startup.
 ```bash
 dotnet build
 dotnet run --project src/GridVault.Api        # health check at /health
-dotnet run --project src/GridVault.Ingestion  # runs migrations, no jobs yet
+dotnet run --project src/GridVault.Ingestion  # runs migrations, schedules the IESO demand fetch job
 ```
 
 ## Testing

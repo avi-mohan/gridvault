@@ -201,3 +201,19 @@ hardcodes UTC-5 for the header specifically, established by the same
 report's header zone turns out to differ from its data zone, this will need
 a real column rather than a per-source constant. We're accepting that now
 rather than generalizing for a case we don't have evidence of yet.
+
+## 2026-08-20 — ingestion_run.window_start/window_end record when a run executed, not a requested range
+
+`IesoDemandFetchJob` always fetches "whatever the current-year file
+currently contains" rather than a specific requested date range, and the
+file's actual content range isn't known until after parsing -- which
+happens after the `ingestion_run` row is inserted, since we want a row to
+exist even if the fetch itself fails. So `window_start` and `window_end`
+are both set to the run's own `fetchedAt` instant: a degenerate, zero-width
+window recording when the run happened, not what data it covered. What
+this gives up: `ingestion_run`'s existing `(series_id, window_start)` index
+can't answer "which run covered date X" the way it could for a source that
+fetches by explicit range. We're accepting that for now since this source
+has exactly one shape of request (the whole current file); a source that
+takes an actual date-range parameter should set these to the real
+requested range instead.
