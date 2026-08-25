@@ -22,6 +22,14 @@ public sealed class SeriesRepository
         string code,
         CancellationToken cancellationToken = default)
     {
+        return await TryGetByCodeAsync(code, cancellationToken)
+            ?? throw new InvalidOperationException($"No series with code '{code}'.");
+    }
+
+    public async Task<GridVault.Domain.Series.Series?> TryGetByCodeAsync(
+        string code,
+        CancellationToken cancellationToken = default)
+    {
         const string sql = """
             SELECT id, source_id, code, name, unit, cadence, source_timezone, hour_convention
             FROM series
@@ -35,9 +43,7 @@ public sealed class SeriesRepository
             new { Code = code },
             cancellationToken: cancellationToken));
 
-        return row is null
-            ? throw new InvalidOperationException($"No series with code '{code}'.")
-            : MapToSeries(row);
+        return row is null ? null : MapToSeries(row);
     }
 
     private static GridVault.Domain.Series.Series MapToSeries(SeriesRow row) => new(

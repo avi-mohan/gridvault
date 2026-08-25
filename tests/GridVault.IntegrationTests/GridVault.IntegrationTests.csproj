@@ -7,6 +7,7 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4" />
     <PackageReference Include="Dapper" Version="2.1.79" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="NodaTime" Version="3.3.3" />
     <PackageReference Include="Npgsql" Version="10.0.3" />
@@ -25,6 +26,7 @@
     <ProjectReference Include="..\..\src\GridVault.Domain\GridVault.Domain.csproj" />
     <ProjectReference Include="..\..\src\GridVault.Data\GridVault.Data.csproj" />
     <ProjectReference Include="..\..\src\GridVault.Ingestion\GridVault.Ingestion.csproj" />
+    <ProjectReference Include="..\..\src\GridVault.Api\GridVault.Api.csproj" />
   </ItemGroup>
 
 </Project>
