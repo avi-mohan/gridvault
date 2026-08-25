@@ -217,3 +217,54 @@ fetches by explicit range. We're accepting that for now since this source
 has exactly one shape of request (the whole current file); a source that
 takes an actual date-range parameter should set these to the real
 requested range instead.
+
+## 2026-08-25 — the as-of read endpoint answers "what had IESO published", not "what had GridVault fetched"
+
+`GET /series/{seriesCode}/observations?as_of=...` filters on
+`transaction_time <= as_of`, and `transaction_time` is the source's own
+publish timestamp per the determinism rule in `CLAUDE.md` (falling back to
+`fetched_at` only when the report carries no publish timestamp of its own).
+For the IESO demand report this is the `Created at` header. That means
+`as_of` answers "what had IESO published by then", not "what had GridVault
+itself fetched by then" -- a report published Monday but not picked up by
+the daily job until Tuesday is visible at `as_of = Monday`, even though
+GridVault didn't actually know it yet at that instant. For a backtesting
+consumer trying to reconstruct exactly what a model could have seen at a
+past moment, those two readings diverge, and the gap between them is
+determined by however stale the daily ingestion job happened to be for that
+particular report. We're choosing source-publish semantics for v1 and
+documenting the gap rather than changing what `transaction_time` means --
+that rule is load-bearing for replay reproducibility (re-ingesting the same
+raw payload six months from now must reproduce the same vintage timestamps)
+and isn't something this endpoint gets to renegotiate. The ingest-time
+reading is already reconstructable without a schema change, by joining
+`ingestion_run` on `observation.ingestion_run_id` and reading
+`window_start` (the run's `fetchedAt` instant, per the entry above) instead
+of `transaction_time`. What we're giving up for now: a client can't ask the
+API for that view directly -- there's no `fetched_as_of` parameter, only
+`as_of` against publish time.
+
+## 2026-08-25 — as-of query plan is a full sort over the partition set at current data volumes, not an incremental sort
+
+Ran `EXPLAIN (ANALYZE, BUFFERS)` for the as-of query
+(`ObservationRepository.GetAsOfAsync`, same shape as the endpoint's 90-day
+max range) against a seeded database (~30k rows: one series, hourly for 20
+months, 2 vintages per hour). The `ix_observation_asof` index on
+`(series_id, valid_time_start, transaction_time DESC)` was expected to let
+Postgres serve `ORDER BY valid_time_start, transaction_time DESC` as an
+incremental sort off the index's already-sorted prefix. That's not what
+happened: the planner instead used per-partition `Seq Scan`/`Bitmap Heap
+Scan`s feeding a plain `Sort` (quicksort) node over the whole appended
+result set -- a full sort over the partition set, exactly the case we said
+we'd call out rather than silently "fix". At this row count it's fast
+regardless (~11ms execution), so this isn't a problem today, and we are
+deliberately not adding an index or restructuring the query in response:
+the decision to defer that optimization until real query volume exists
+(see the append-only-vs-close-on-write entry above) still holds -- this
+result is synthetic seed data, not production traffic, and doesn't
+constitute the "real query volume" that decision was waiting on. Recorded
+here so the next person looking at this doesn't have to re-derive it: if
+as-of query latency becomes a real problem, start by re-examining why the
+incremental sort path isn't chosen (partition-wise planning interacting
+with `DISTINCT ON`'s implicit sort is one candidate) before reaching for a
+new index.
