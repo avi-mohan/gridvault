@@ -1,5 +1,7 @@
 # GridVault
 
+[![CI](https://github.com/avi-mohan/gridvault/actions/workflows/ci.yml/badge.svg)](https://github.com/avi-mohan/gridvault/actions/workflows/ci.yml)
+
 Market data ingestion and serving platform for Ontario's electricity market
 (IESO). It ingests public hourly data on a schedule, stores every revision,
 and serves it over a REST API that can answer "what did we know about hour
@@ -34,32 +36,34 @@ dotnet run --project src/GridVault.Ingestion  # applies migrations, seeds series
 dotnet run --project src/GridVault.Api        # read API on http://localhost:5236
 ```
 
-The ingestion worker applies migrations immediately but the IESO fetch
-itself runs on a daily UTC cron — right after a fresh `docker compose up`
-there's schema and series metadata but no observations yet, so the API
-answers with an empty list rather than an error:
+This is the entire pitch of the project in two commands. IESO republished
+2026-08-17's hour-ending-1 Ontario demand a day later with a revised value
+— this is real ingested data, both vintages landed by two separate daily
+runs, queried at two different `as_of` instants:
 
 ```bash
-$ curl "http://localhost:5236/series/ieso.demand.market/observations?from=2026-08-01T00:00:00Z&to=2026-08-01T04:00:00Z"
-{"series_code":"ieso.demand.market","as_of":"2026-08-25T19:30:02Z","from":"2026-08-01T00:00:00Z","to":"2026-08-01T04:00:00Z","observations":[]}
+$ curl "http://localhost:5236/series/ieso.demand.ontario/observations?from=2026-08-17T05:00:00Z&to=2026-08-17T06:00:00Z&as_of=2026-08-17T12:30:11Z"
+{"series_code":"ieso.demand.ontario","as_of":"2026-08-17T12:30:11Z","from":"2026-08-17T05:00:00Z","to":"2026-08-17T06:00:00Z","observations":[{"valid_time_start":"2026-08-17T05:00:00Z","value":16615,"status":"observed","transaction_time":"2026-08-17T12:30:10Z","ingestion_run_id":1}]}
+
+$ curl "http://localhost:5236/series/ieso.demand.ontario/observations?from=2026-08-17T05:00:00Z&to=2026-08-17T06:00:00Z&as_of=2026-08-18T12:30:10Z"
+{"series_code":"ieso.demand.ontario","as_of":"2026-08-18T12:30:10Z","from":"2026-08-17T05:00:00Z","to":"2026-08-17T06:00:00Z","observations":[{"valid_time_start":"2026-08-17T05:00:00Z","value":16190,"status":"observed","transaction_time":"2026-08-18T12:30:09Z","ingestion_run_id":2}]}
 ```
 
-Once the ingestion job has actually run — or against a database seeded with
-real ingested data, as below — the same endpoint returns actual vintages:
-
-```bash
-$ curl "http://localhost:5236/series/ieso.demand.ontario/observations?from=2026-08-01T00:00:00Z&to=2026-08-01T04:00:00Z&as_of=2026-08-25T00:00:00Z"
-{"series_code":"ieso.demand.ontario","as_of":"2026-08-25T00:00:00Z","from":"2026-08-01T00:00:00Z","to":"2026-08-01T04:00:00Z","observations":[{"valid_time_start":"2026-08-01T00:00:00Z","value":19042,"status":"observed","transaction_time":"2026-08-02T09:00:00Z","ingestion_run_id":1},{"valid_time_start":"2026-08-01T01:00:00Z","value":19338,"status":"observed","transaction_time":"2026-08-02T10:00:00Z","ingestion_run_id":1},{"valid_time_start":"2026-08-01T02:00:00Z","value":15371,"status":"observed","transaction_time":"2026-08-02T11:00:00Z","ingestion_run_id":1},{"valid_time_start":"2026-08-01T03:00:00Z","value":16385,"status":"observed","transaction_time":"2026-08-02T12:00:00Z","ingestion_run_id":1}]}
-```
+Same hour, same `from`/`to`, different `as_of`: the first query lands
+between the two publish times and returns the original 16615; the second
+lands after the revision and returns 16190. Note the two different
+`ingestion_run_id`s — a single run has one `transaction_time` (see
+`CLAUDE.md`'s determinism rule), so a same-hour revision always means two
+runs, never one run writing two vintages.
 
 `from`/`to` are a half-open `[from, to)` range over `valid_time_start`,
-`as_of` is optional (defaults to now) and inclusive against
-`transaction_time`. Every timestamp needs an explicit UTC offset — a naive
-one is rejected:
+capped at 90 days. `as_of` is optional (defaults to now) and inclusive
+against `transaction_time`. Every timestamp needs an explicit offset — a
+naive one is rejected:
 
 ```bash
-$ curl -w '\nHTTP %{http_code}\n' "http://localhost:5236/series/ieso.demand.ontario/observations?from=2026-08-01T00:00:00&to=2026-08-01T04:00:00"
-{"error":"'from': must be an ISO-8601 timestamp with an explicit UTC offset (e.g. '2026-08-01T00:00:00Z'). Got '2026-08-01T00:00:00'."}
+$ curl -w '\nHTTP %{http_code}\n' "http://localhost:5236/series/ieso.demand.ontario/observations?from=2026-08-17T00:00:00&to=2026-08-18T00:00:00"
+{"error":"'from': must be an ISO-8601 timestamp with an explicit offset (e.g. '2026-08-01T00:00:00Z'). Got '2026-08-17T00:00:00'."}
 HTTP 400
 ```
 
@@ -67,6 +71,16 @@ HTTP 400
 itself fetched by then" — see the "as-of read endpoint" entry (2026-08-25)
 in [`docs/decisions.md`](docs/decisions.md) for why, and what that gap
 actually means for a backtest.
+
+The ingestion worker applies migrations immediately but the IESO fetch
+itself runs on a daily UTC cron, so if you've only just run `docker compose
+up` with no ingestion runs yet, expect an empty list rather than the above
+— the series exists (migrations seed it) but nothing has been fetched:
+
+```bash
+$ curl "http://localhost:5236/series/ieso.demand.ontario/observations?from=2024-09-01T00:00:00Z&to=2024-09-02T00:00:00Z"
+{"series_code":"ieso.demand.ontario","as_of":"2026-08-26T18:13:49.7174696Z","from":"2024-09-01T00:00:00Z","to":"2024-09-02T00:00:00Z","observations":[]}
+```
 
 ## Stack
 
@@ -121,8 +135,8 @@ Docker.
 ## Not yet built
 
 v1's scope is deliberately narrow: scheduled ingestion of the IESO hourly
-demand report, an as-of read endpoint, and CI. Deliberately scoped out for
-now, not missing by oversight:
+demand report and an as-of read endpoint, both built, tested, and running
+in CI. Deliberately scoped out for now, not missing by oversight:
 
 - **Pagination** on the observations endpoint — the 90-day range cap keeps
   a single response to ~2,160 rows, so it hasn't been needed yet.
@@ -141,6 +155,5 @@ now, not missing by oversight:
 - **Auth** on the API.
 
 See [`docs/decisions.md`](docs/decisions.md) for the reasoning behind
-what's already built, including tradeoffs that are worth knowing about even
-though they didn't need code changes to resolve (e.g. the as-of query's
-current EXPLAIN plan).
+what's already built — including the as-of query's current `EXPLAIN` plan,
+which is written up there.
