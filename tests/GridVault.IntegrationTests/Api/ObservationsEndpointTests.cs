@@ -78,6 +78,75 @@ public class ObservationsEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetObservations_AsOfExactlyEqualsTransactionTime_IncludesTheVintage()
+    {
+        // as_of is documented as inclusive (transaction_time <= as_of); a
+        // vintage published at exactly the boundary instant must still be
+        // visible, not excluded by an off-by-one.
+        var seriesCode = $"test.boundary.{Guid.NewGuid():N}";
+        await using var dataSource = GridVaultDataSource.Create(_fixture.ConnectionString);
+        await using var connection = await dataSource.OpenConnectionAsync();
+
+        var (sourceId, seriesId) = await SeedSeriesAsync(connection, seriesCode);
+
+        var now = SystemClock.Instance.GetCurrentInstant();
+        var validStart = now - Duration.FromDays(1);
+        var validEnd = validStart + Duration.FromHours(1);
+        var transactionTime = validStart + Duration.FromMinutes(5);
+
+        var runId = await InsertIngestionRunAsync(connection, sourceId, seriesId, transactionTime);
+        await InsertObservationAsync(connection, seriesId, validStart, validEnd, transactionTime, 1234m, "observed", runId);
+
+        var response = await _client.GetFromJsonAsync<ObservationsResponse>(
+            $"/series/{seriesCode}/observations?from={FormatInstant(validStart)}&to={FormatInstant(validEnd)}" +
+            $"&as_of={FormatInstant(transactionTime)}");
+
+        Assert.Equal(1234m, Assert.Single(response!.Observations).Value);
+    }
+
+    [Fact]
+    public async Task GetObservations_SubSecondTransactionTime_RoundTripsThroughEchoedAsOfAndTransactionTime()
+    {
+        // The response echoes as_of (defaulted from SystemClock, which has
+        // sub-second precision) and each row's transaction_time. A client
+        // that feeds either straight back as as_of must get the same row
+        // back -- if formatting floors the fraction, transaction_time <=
+        // as_of can flip from true to false for a value copied verbatim
+        // from this same response.
+        var seriesCode = $"test.subsecond.{Guid.NewGuid():N}";
+        await using var dataSource = GridVaultDataSource.Create(_fixture.ConnectionString);
+        await using var connection = await dataSource.OpenConnectionAsync();
+
+        var (sourceId, seriesId) = await SeedSeriesAsync(connection, seriesCode);
+
+        var now = SystemClock.Instance.GetCurrentInstant();
+        var validStart = now - Duration.FromDays(1);
+        var validEnd = validStart + Duration.FromHours(1);
+        // Well in the past relative to "now" so it's covered regardless of
+        // how long the test takes to reach the no-as_of request below.
+        var transactionTime = validStart + Duration.FromMinutes(5) + Duration.FromMilliseconds(437);
+
+        var runId = await InsertIngestionRunAsync(connection, sourceId, seriesId, transactionTime);
+        await InsertObservationAsync(connection, seriesId, validStart, validEnd, transactionTime, 4321m, "observed", runId);
+
+        var from = FormatInstant(validStart);
+        var to = FormatInstant(validEnd);
+
+        var initial = await _client.GetFromJsonAsync<ObservationsResponse>(
+            $"/series/{seriesCode}/observations?from={from}&to={to}");
+        var observation = Assert.Single(initial!.Observations);
+        Assert.Equal(4321m, observation.Value);
+
+        var byEchoedAsOf = await _client.GetFromJsonAsync<ObservationsResponse>(
+            $"/series/{seriesCode}/observations?from={from}&to={to}&as_of={Uri.EscapeDataString(initial.AsOf)}");
+        var byEchoedTransactionTime = await _client.GetFromJsonAsync<ObservationsResponse>(
+            $"/series/{seriesCode}/observations?from={from}&to={to}&as_of={Uri.EscapeDataString(observation.TransactionTime)}");
+
+        Assert.Equal(4321m, Assert.Single(byEchoedAsOf!.Observations).Value);
+        Assert.Equal(4321m, Assert.Single(byEchoedTransactionTime!.Observations).Value);
+    }
+
+    [Fact]
     public async Task GetObservations_NaiveTimestamp_ReturnsBadRequest()
     {
         // No UTC offset on either bound -- must be rejected rather than
@@ -174,5 +243,9 @@ public class ObservationsEndpointTests : IAsyncLifetime
             });
     }
 
-    private static string FormatInstant(Instant instant) => Uri.EscapeDataString(InstantPattern.General.Format(instant));
+    // ExtendedIso, not General: General floors to whole seconds, and
+    // SystemClock-derived instants (as used throughout these tests) reliably
+    // carry a sub-second remainder -- General would silently shift as_of
+    // earlier than the transaction_time being compared against it.
+    private static string FormatInstant(Instant instant) => Uri.EscapeDataString(InstantPattern.ExtendedIso.Format(instant));
 }

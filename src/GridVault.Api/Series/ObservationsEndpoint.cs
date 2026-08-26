@@ -35,37 +35,41 @@ public static class ObservationsEndpoint
     {
         if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
         {
-            return Problem("Query parameters 'from' and 'to' are both required.");
+            return BadRequest("Query parameters 'from' and 'to' are both required.");
         }
 
         if (!TryParseOffsetTimestamp(from, out var fromInstant, out var fromError))
         {
-            return Problem($"'from': {fromError}");
+            return BadRequest($"'from': {fromError}");
         }
 
         if (!TryParseOffsetTimestamp(to, out var toInstant, out var toError))
         {
-            return Problem($"'to': {toError}");
+            return BadRequest($"'to': {toError}");
         }
 
         Instant asOfInstant;
         if (string.IsNullOrWhiteSpace(asOf))
         {
+            // Read-path default only -- this is "as of right now" for a
+            // client that didn't ask for a specific instant, not a stored
+            // fact. It never becomes a transaction_time, so it's not in
+            // tension with CLAUDE.md's determinism rule for that column.
             asOfInstant = SystemClock.Instance.GetCurrentInstant();
         }
         else if (!TryParseOffsetTimestamp(asOf, out asOfInstant, out var asOfError))
         {
-            return Problem($"'as_of': {asOfError}");
+            return BadRequest($"'as_of': {asOfError}");
         }
 
         if (fromInstant >= toInstant)
         {
-            return Problem("'from' must be strictly before 'to'.");
+            return BadRequest("'from' must be strictly before 'to'.");
         }
 
         if (toInstant - fromInstant > MaxRange)
         {
-            return Problem($"The range between 'from' and 'to' cannot exceed {MaxRange.Days} days.");
+            return BadRequest($"The range between 'from' and 'to' cannot exceed {MaxRange.Days} days.");
         }
 
         var series = await seriesRepository.TryGetByCodeAsync(seriesCode, cancellationToken);
@@ -94,7 +98,7 @@ public static class ObservationsEndpoint
         return Results.Ok(response);
     }
 
-    private static IResult Problem(string detail) => Results.BadRequest(new { error = detail });
+    private static IResult BadRequest(string detail) => Results.BadRequest(new { error = detail });
 
     private static bool TryParseOffsetTimestamp(string text, out Instant instant, out string? error)
     {
@@ -107,12 +111,17 @@ public static class ObservationsEndpoint
         }
 
         instant = default;
-        error = "must be an ISO-8601 timestamp with an explicit UTC offset " +
+        error = "must be an ISO-8601 timestamp with an explicit offset " +
             $"(e.g. '2026-08-01T00:00:00Z'). Got '{text}'.";
         return false;
     }
 
-    private static string FormatInstant(Instant instant) => InstantPattern.General.Format(instant);
+    // ExtendedIso, not General: General has no fractional-second component,
+    // which would floor a sub-second as_of/transaction_time on the way out.
+    // A client that echoes the response's own as_of back as a request
+    // parameter must get the same result set, and General silently breaks
+    // that for any instant that isn't exactly on a second boundary.
+    private static string FormatInstant(Instant instant) => InstantPattern.ExtendedIso.Format(instant);
 
     private static string FormatStatus(ObservationStatus status) => status switch
     {
