@@ -22,9 +22,10 @@ store (valid_time, transaction_time) pairs and never mutate history.
   intentional.
 - ASP.NET Core minimal APIs for the read side
 - Quartz.NET for scheduling inside the worker
-- Serilog (structured, JSON sink) + OpenTelemetry
-- Docker Compose for local dev: Postgres, MinIO (S3 stand-in), the worker, the
-  API
+- Serilog (structured, JSON sink) + OpenTelemetry (not wired in yet — see
+  docs/decisions.md and README's "Not yet built")
+- Docker Compose for local dev: Postgres, MinIO (S3 stand-in). The worker
+  and API run via `dotnet run`, not as compose services.
 - xUnit + Testcontainers for integration tests, WireMock.NET for upstream
   stubs
 - GitHub Actions for CI. Terraform stays out of scope.
