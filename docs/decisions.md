@@ -1,7 +1,36 @@
 # Design decisions
 
 One paragraph per decision: what we chose, what we gave up. Newest at the
-bottom.
+bottom; entries are not edited after the fact — a change of mind gets a new
+entry with a pointer back to the one it revises or supersedes, not a
+rewrite of the original.
+
+## Index
+
+### Schema & bitemporal model
+- [Observation is append-only, not close-on-write bitemporal](#2026-08-13--observation-is-append-only-not-close-on-write-bitemporal)
+- [No DEFAULT partition on observation](#2026-08-13--no-default-partition-on-observation)
+- [Retraction/status semantics on observation](#2026-08-13--retractionstatus-semantics-on-observation)
+- [`ingestion_run_id` lineage column on observation](#2026-08-13--ingestion_run_id-lineage-column-on-observation)
+- [Unique constraint on `(series_id, valid_time_start, transaction_time)`](#2026-08-13--unique-constraint-on-series_id-valid_time_start-transaction_time)
+- [`transaction_time` is deterministic, not wall-clock-at-insert](#2026-08-13--transaction_time-is-deterministic-not-wall-clock-at-insert)
+
+### Time & timezone handling
+- [NodaTime for time handling](#2026-08-13--nodatime-for-time-handling)
+- [Demand report is fixed EST (UTC-5), not Eastern Prevailing Time](#2026-08-20--demand-report-is-fixed-est-utc-5-not-eastern-prevailing-time)
+- [`Created at` header's zone is a fact separate from the data rows' zone](#2026-08-20--created-at-headers-zone-is-a-fact-separate-from-the-data-rows-zone)
+
+### Data access
+- [`Instant`↔`timestamptz` mapping registered centrally, not per call site](#2026-08-13--instant-timestamptz-mapping-registered-centrally-not-per-call-site)
+- [The as-of read endpoint answers "what had IESO published", not "what had GridVault fetched"](#2026-08-25--the-as-of-read-endpoint-answers-what-had-ieso-published-not-what-had-gridvault-fetched)
+- [As-of query plan is a full sort over the partition set, not an incremental sort](#2026-08-25--as-of-query-plan-is-a-full-sort-over-the-partition-set-at-current-data-volumes-not-an-incremental-sort)
+
+### Operational
+- [DbUp over FluentMigrator for migrations](#2026-08-13--dbup-over-fluentmigrator-for-migrations)
+- [Partition range is a placeholder; tripwire deferred to Milestone 3](#2026-08-13--partition-range-is-a-placeholder-tripwire-deferred-to-milestone-3)
+- [Quartz.NET and OpenTelemetry not wired yet](#2026-08-13--quartznet-and-opentelemetry-not-wired-yet)
+- [Pinned SSH.NET to 2026.0.0 in `GridVault.IntegrationTests`](#2026-08-13--pinned-sshnet-to-202600-in-gridvaultintegrationtests)
+- [`ingestion_run.window_start`/`window_end` record when a run executed, not a requested range](#2026-08-20--ingestion_runwindow_startwindow_end-record-when-a-run-executed-not-a-requested-range)
 
 ## 2026-08-13 — NodaTime for time handling
 
@@ -13,6 +42,13 @@ vs `LocalDateTime` vs `ZonedDateTime` — rather than `DateTime`'s ambiguous
 `Kind` property. The cost is one more dependency and a small learning curve
 for anyone unfamiliar with NodaTime's type system; we think that cost is
 worth it for code whose entire job is not getting DST wrong.
+
+**Superseded in part by 2026-08-20** — the demand report turned out to be
+fixed EST with no DST transitions at all, so "real DST transitions with
+23- and 25-hour days" isn't a fact about that report specifically. The
+reasoning still holds in general: it's exactly why the post-Market-Renewal
+Day-Ahead Market report, which is expected to observe true Eastern
+Prevailing Time, needs the same type safety.
 
 ## 2026-08-13 — DbUp over FluentMigrator for migrations
 
@@ -44,6 +80,11 @@ churn (and the resulting autovacuum pressure) on the hottest table in the
 system, and a race condition between concurrent ingestion runs both trying
 to "close" the same previous row.
 
+**Follow-up, 2026-08-25:** this deferred optimization was checked against a
+real `EXPLAIN` plan once the as-of endpoint existed — see the as-of
+query-plan entry near the bottom of this file. Short version: still
+deferred, still deliberately.
+
 ## 2026-08-13 — no DEFAULT partition on observation
 
 A `DEFAULT` partition would silently absorb any insert whose
@@ -73,6 +114,11 @@ unreasonable headroom. Nothing calls it on a schedule yet — that's Milestone
 3's job, once there's an alerting path for it to feed into. Until then this
 is a known, accepted gap: the system will work fine until whatever month we
 run past the pre-created range.
+
+**See also** the no-DEFAULT-partition entry above — this tripwire is the
+thing that entry's cost note points forward to, and the README's "Not yet
+built" list points back to this entry as the reasoning for why scheduled
+partition maintenance isn't there yet.
 
 ## 2026-08-13 — retraction/status semantics on observation
 
@@ -131,6 +177,12 @@ code. Serilog is wired in both hosts now since structured logging is useful
 immediately (migration output, request logs) and costs nothing to configure
 early. Quartz and OpenTelemetry land with Milestone 2, when there's an
 actual job and an actual request path to instrument.
+
+**Status update:** Quartz.NET was wired shortly after this entry, once
+`IesoDemandFetchJob` existed (see its daily cron trigger in
+`GridVault.Ingestion/Program.cs`). OpenTelemetry is still not wired, even
+though the request path and job both now exist — see README's "Not yet
+built" list.
 
 ## 2026-08-13 — Instant<->timestamptz mapping registered centrally, not per call site
 
