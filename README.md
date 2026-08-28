@@ -2,10 +2,12 @@
 
 [![CI](https://github.com/avi-mohan/gridvault/actions/workflows/ci.yml/badge.svg)](https://github.com/avi-mohan/gridvault/actions/workflows/ci.yml)
 
-Market data ingestion and serving platform for Ontario's electricity market
-(IESO). It ingests public hourly data on a schedule, stores every revision,
-and serves it over a REST API that can answer "what did we know about hour
-X as of time Y?"
+GridVault is a market data platform for Ontario's electricity market
+(IESO), built around one requirement: a backtest must never see a number
+before it was actually knowable. It ingests public hourly data on a
+schedule, stores every revision, and serves it over a REST API that
+answers "what did we know about hour X as of time Y?" — the question that
+keeps lookahead bias out of a backtest.
 
 IESO publishes preliminary demand figures that get restated hours or days
 later. Overwriting the old value on restatement would destroy the ability
@@ -36,10 +38,10 @@ dotnet run --project src/GridVault.Ingestion  # applies migrations, seeds series
 dotnet run --project src/GridVault.Api        # read API on http://localhost:5236
 ```
 
-This is the entire pitch of the project in two commands. IESO republished
-2026-08-17's hour-ending-1 Ontario demand a day later with a revised value
-— this is real ingested data, both vintages landed by two separate daily
-runs, queried at two different `as_of` instants:
+IESO republished 2026-08-17's hour-ending-1 Ontario demand a day later
+with a revised value — both vintages below are real ingested data, landed
+by two separate daily runs. This is the entire pitch of the project in two
+commands:
 
 ```bash
 $ curl "http://localhost:5236/series/ieso.demand.ontario/observations?from=2026-08-17T05:00:00Z&to=2026-08-17T06:00:00Z&as_of=2026-08-17T12:30:11Z"
@@ -52,9 +54,12 @@ $ curl "http://localhost:5236/series/ieso.demand.ontario/observations?from=2026-
 Same hour, same `from`/`to`, different `as_of`: the first query lands
 between the two publish times and returns the original 16615; the second
 lands after the revision and returns 16190. Note the two different
-`ingestion_run_id`s — a single run has one `transaction_time` (see
-`CLAUDE.md`'s determinism rule), so a same-hour revision always means two
-runs, never one run writing two vintages.
+`ingestion_run_id`s — `IesoDemandFetchJob` fetches exactly one file (one
+`Created at` header) per run, so a same-hour revision means two runs here.
+That's a property of this job's shape, not a rule the schema enforces: a
+future replay run ingesting several previously-landed payloads in one
+execution would write several `transaction_time`s under a single
+`ingestion_run_id`.
 
 `from`/`to` are a half-open `[from, to)` range over `valid_time_start`,
 capped at 90 days. `as_of` is optional (defaults to now) and inclusive
@@ -68,9 +73,9 @@ HTTP 400
 ```
 
 `as_of` answers "what had IESO published by then", not "what had GridVault
-itself fetched by then" — see the "as-of read endpoint" entry (2026-08-25)
-in [`docs/decisions.md`](docs/decisions.md) for why, and what that gap
-actually means for a backtest.
+itself fetched by then" — see the ["as-of read endpoint" entry](docs/decisions.md#2026-08-25--the-as-of-read-endpoint-answers-what-had-ieso-published-not-what-had-gridvault-fetched)
+(2026-08-25) in `docs/decisions.md` for why, and what that gap actually
+means for a backtest.
 
 The ingestion worker applies migrations immediately but the IESO fetch
 itself runs on a daily UTC cron, so if you've only just run `docker compose
@@ -116,8 +121,8 @@ source.
 
 The hourly demand report's data rows are fixed EST (UTC-5) year-round with
 no DST transitions, confirmed empirically rather than assumed — see the
-"demand report is fixed EST" entry (2026-08-20) in
-[`docs/decisions.md`](docs/decisions.md) for the evidence. Other IESO
+["demand report is fixed EST" entry](docs/decisions.md#2026-08-20--demand-report-is-fixed-est-utc-5-not-eastern-prevailing-time)
+(2026-08-20) in `docs/decisions.md` for the evidence. Other IESO
 reports (e.g. the post-Market-Renewal Day-Ahead Market) are expected to use
 true Eastern Prevailing Time instead, which is why `series.source_timezone`
 is data on each series row rather than a project-wide constant.
@@ -136,17 +141,26 @@ Docker.
 
 v1's scope is deliberately narrow: scheduled ingestion of the IESO hourly
 demand report and an as-of read endpoint, both built, tested, and running
-in CI. Deliberately scoped out for now, not missing by oversight:
+in CI. Every item below was cut on purpose, not forgotten — two of them
+have a full tradeoff write-up in `docs/decisions.md`, linked below; the
+rest have their reasoning stated right in the bullet, or (for the last
+three) no scope decision at all, just not built yet.
+
+### Scoped out, with reasoning recorded
 
 - **Pagination** on the observations endpoint — the 90-day range cap keeps
   a single response to ~2,160 rows, so it hasn't been needed yet.
 - **OpenTelemetry** tracing/metrics — listed in the stack but not wired in;
-  there's now an actual request path and an actual ingestion job to
-  instrument, so this is next.
+  see the ["Quartz.NET and OpenTelemetry not wired yet"](docs/decisions.md#2026-08-13--quartznet-and-opentelemetry-not-wired-yet)
+  entry (Quartz has since landed; OpenTelemetry hasn't).
 - **Scheduled partition maintenance** — `PartitionMaintenance.EnsureFuturePartitionsAsync`
-  exists and is tested but nothing calls it on a schedule yet; the
-  pre-created partition range is a guessed placeholder.
+  exists and is tested but nothing calls it on a schedule yet; see the
+  ["partition range is a placeholder"](docs/decisions.md#2026-08-13--partition-range-is-a-placeholder-tripwire-deferred-to-milestone-3)
+  entry.
 - **Price series** — demand only for v1.
+
+### Not there yet — no scope decision behind these, just time
+
 - **Replay** — re-ingesting from previously-landed raw payloads to
   reproduce historical vintages. The raw landing step already makes this
   possible; the replay driver itself doesn't exist yet.
